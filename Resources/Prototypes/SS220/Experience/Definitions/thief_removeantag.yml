@@ -1,0 +1,7 @@
+# SS220-removeantag-fix05: Role-specific knowledge for thieves.
+# Grants no additional skill points or profession skills.
+- type: experienceDefinition
+  id: ThiefRoleExperience
+  knowledges:
+  - ThiefKnowledge
+  addSublevelPoints: 0

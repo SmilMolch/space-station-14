@@ -22,8 +22,27 @@ public abstract partial class BaseSublevelAddComponent : Component
     [DataField] // to make copying possible for engine
     [AutoNetworkedField]
     public int SpentSublevelPoints;
+
+    // SS220-removeantag-fix03: server-side purchase journal. Kept separate
+    // from EarnedSkillSublevel (genuine learning must never be rolled back).
+    // Intentionally not a DataField/AutoNetworkedField: purchases are stored
+    // for the current round and rebuilt when a new round starts.
+    public readonly List<ExperienceSublevelPurchase> PurchaseHistory = new();
 }
 
 [RegisterComponent, NetworkedComponent]
 [AutoGenerateComponentState]
 public sealed partial class JobBackgroundSublevelAddComponent : BaseSublevelAddComponent;
+
+/// <summary>One free-sublevel allocation through the experience editor.</summary>
+public sealed class ExperienceSublevelPurchase
+{
+    public ProtoId<SkillTreePrototype> SkillTree;
+    public int Amount;
+
+    public ExperienceSublevelPurchase(ProtoId<SkillTreePrototype> skillTree, int amount)
+    {
+        SkillTree = skillTree;
+        Amount = amount;
+    }
+}

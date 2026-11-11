@@ -30,33 +30,67 @@ public sealed partial class ExperienceEditorSystem : EntitySystem
         SubscribeLocalEvent<ExperienceComponent, GotCultifiedEvent>(OnCultified);
         SubscribeLocalEvent<ExperienceComponent, LiberationFromCultEvent>(OnLiberationFromCult);
 
+        // SS220-removeantag-fix03-begin: cult knowledge and points must be
+        // rebuilt on *every* experience recalculation, not only on conversion.
+        SubscribeLocalEvent<CultYoggExperienceSourceComponent, KnowledgeInitialResolve>(OnCultKnowledgeResolve);
+        SubscribeLocalEvent<CultYoggExperienceSourceComponent, SublevelAdditionPointInitialResolve>(OnCultPointsResolve);
+        // SS220-removeantag-fix03-end
+
         SubscribeNetworkEvent<ChangeEntityExperienceAdminRequest>(OnChangeAdminRequest);
         SubscribeNetworkEvent<ChangeEntityExperiencePlayerRequest>(OnChangePlayerRequest);
         SubscribeLocalEvent<RoundEndedEvent>(OnRoundEnd);
     }
 
-    // !! DO NOT DO THE SAME !!
-    // It requires own system with dict like <obj, int> to resolve different sources of points
-    // just don't have time to implement & test it =(
-    // so you can actually make `god-add-experience` comp with own system to kill 10+ components and also do somewhat with role add knowledges or points
-    // zero idea should it be added with mindrole feels kinda other thing for this system
+    /// <summary>
+    /// Removes the cult experience source via the same event as normal
+    /// deconversion; callers should not raise method events directly.
+    /// </summary>
+    public void RevokeCultKnowledge(EntityUid body)
+    {
+        var ev = new LiberationFromCultEvent();
+        RaiseLocalEvent(body, ref ev);
+    }
+
+    // SS220-removeantag-fix03-begin
+    // The old implementation granted CultYoggKnowledge only once and used a
+    // shared AntagFreeSublevelPointsAddComponent. Any normal skill recalculation
+    // cleared that knowledge, and the shared component could not track owners.
+    // A dedicated source survives skill changes and is removed on liberation.
     private void OnCultified(Entity<ExperienceComponent> entity, ref GotCultifiedEvent args)
     {
-        _experience.TryAddKnowledge(entity!, CultYoggKnowledge);
-        var addPointsComp = EnsureComp<AntagFreeSublevelPointsAddComponent>(entity);
-
-        if (addPointsComp.AddFreeSublevelPoints < 5)
-            addPointsComp.AddFreeSublevelPoints = 5;
+        EnsureComp<CultYoggExperienceSourceComponent>(entity);
+        var recalc = new RecalculateEntityExperience();
+        RaiseLocalEvent(entity, ref recalc);
     }
 
     private void OnLiberationFromCult(Entity<ExperienceComponent> entity, ref LiberationFromCultEvent args)
     {
-        _experience.TryRemoveKnowledge(entity!, CultYoggKnowledge);
-        var addPointsComp = EnsureComp<AntagFreeSublevelPointsAddComponent>(entity);
+        // Only revoke cult-owned bonus points. A generic +5 component may
+        // legitimately be owned by another effect and must not be guessed away.
+        // This handler requires a fresh round after patch installation.
+        if (!RemComp<CultYoggExperienceSourceComponent>(entity))
+            return;
 
-        if (addPointsComp.AddFreeSublevelPoints == 5)
-            RemComp<AntagFreeSublevelPointsAddComponent>(entity);
+        // If cult-granted points were already spent, revoke only purchases
+        // exceeding the budget of the remaining sources (job, etc.).
+        _experience.RollBackUnfundedSkillPoints(entity.Owner);
+
+        var recalc = new RecalculateEntityExperience();
+        RaiseLocalEvent(entity, ref recalc);
     }
+
+    private void OnCultKnowledgeResolve(Entity<CultYoggExperienceSourceComponent> entity, ref KnowledgeInitialResolve args)
+    {
+        if (!args.DenyChanges)
+            args.Knowledges.Add(CultYoggKnowledge);
+    }
+
+    private void OnCultPointsResolve(Entity<CultYoggExperienceSourceComponent> entity, ref SublevelAdditionPointInitialResolve args)
+    {
+        if (!args.DenyChanges)
+            args.FreeSublevelPoints += 5;
+    }
+    // SS220-removeantag-fix03-end
 
     private void OnChangeAdminRequest(ChangeEntityExperienceAdminRequest ev, EntitySessionEventArgs args)
     {
@@ -109,6 +143,10 @@ public sealed partial class ExperienceEditorSystem : EntitySystem
             }
 
             playerChangedComp.Skills[skillId] += (sublevel - ExperienceSystem.StartSublevel);
+            // SS220-removeantag-fix03: track the actual purchases so that removing
+            // an antagonist source can revoke unfunded points in reverse order.
+            if (sublevel > 0)
+                playerChangedComp.PurchaseHistory.Add(new ExperienceSublevelPurchase(skillId, sublevel));
         }
 
         _adminLog.Add(LogType.Experience, LogImpact.Low, $"{ToPrettyString(playerEntity):user} used free points for adding sublevels. Used to {GetSublevelStringView(validInput)}");

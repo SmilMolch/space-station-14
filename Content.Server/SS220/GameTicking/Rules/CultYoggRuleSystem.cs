@@ -50,6 +50,8 @@ using Robust.Shared.Timing;
 using Robust.Shared.Utility;
 using System.Diagnostics.CodeAnalysis;
 
+using Content.Server.SS220.AntagRemoval;
+
 namespace Content.Server.SS220.GameTicking.Rules;
 
 public sealed partial class CultYoggRuleSystem : GameRuleSystem<CultYoggRuleComponent>
@@ -316,6 +318,9 @@ public sealed partial class CultYoggRuleSystem : GameRuleSystem<CultYoggRuleComp
 
     public void MakeCultist(EntityUid uid, Entity<CultYoggRuleComponent> rule)
     {
+        // Capture pre-conversion faction/pacifism even for mid-round converts.
+        var remover = EntityManager.System<RemoveAntagSystem>();
+        remover.BeforeCultConversion(uid);
         // Change the faction
         _npcFaction.RemoveFaction(uid, rule.Comp.NanoTrasenFaction, false);
         _npcFaction.AddFaction(uid, rule.Comp.CultYoggFaction);
@@ -349,6 +354,7 @@ public sealed partial class CultYoggRuleSystem : GameRuleSystem<CultYoggRuleComp
 
         var cultifiedEv = new GotCultifiedEvent();
         RaiseLocalEvent(uid, ref cultifiedEv);
+        remover.AfterCultConversion(uid, rule.Owner);
 
         DirtyEntity(uid);
     }

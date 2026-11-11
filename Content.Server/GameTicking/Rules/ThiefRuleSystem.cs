@@ -1,8 +1,11 @@
 using Content.Server.Antag;
+using Content.Server.SS220.AntagRemoval;
 using Content.Server.GameTicking.Rules.Components;
 using Content.Server.Roles;
 using Content.Shared.Humanoid;
 using Content.Shared.Roles.Components;
+using Content.Shared.SS220.Experience;
+using Content.Shared.SS220.Experience.Systems;
 
 namespace Content.Server.GameTicking.Rules;
 
@@ -23,6 +26,20 @@ public sealed class ThiefRuleSystem : GameRuleSystem<ThiefRuleComponent>
     private void AfterAntagSelected(Entity<ThiefRuleComponent> mindId, ref AfterAntagEntitySelectedEvent args)
     {
         var ent = args.EntityUid;
+
+        // SS220-removeantag-fix05-begin
+        // ThiefKnowledge exists in SS220 but is not added by ThiefGear or
+        // ThiefRuleSystem. Register it as a persistent experience source, so
+        // spending skill points won't erase it and removeantag can revoke it.
+        if (HasComp<ExperienceComponent>(ent))
+        {
+            var sources = EnsureComp<AntagExperienceSourcesComponent>(ent);
+            sources.Definitions[RemoveAntagRoles.Thief] = "ThiefRoleExperience";
+            Dirty(ent, sources);
+            EntityManager.System<ExperienceSystem>().RecalculateFromSources(ent);
+        }
+        // SS220-removeantag-fix05-end
+
         _antag.SendBriefing(ent, MakeBriefing(ent), null, null);
     }
 

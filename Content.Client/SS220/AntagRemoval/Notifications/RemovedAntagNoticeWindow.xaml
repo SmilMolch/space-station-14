@@ -1,0 +1,12 @@
+<!-- © SS220, An EULA/CLA with a hosting restriction, full text: https://raw.githubusercontent.com/SerbiaStrong-220/space-station-14/master/CLA.txt -->
+<DefaultWindow
+    xmlns="https://spacestation14.io"
+    Title="{Loc ss220-removeantag-window-title}"
+    MinWidth="390">
+    <BoxContainer Orientation="Vertical" SeparationOverride="10">
+        <Label Name="TextLabel" Access="Public" HorizontalExpand="True" />
+        <BoxContainer Orientation="Horizontal" HorizontalAlignment="Center">
+            <Button Name="AcceptButton" Access="Public" Text="{Loc ss220-removeantag-window-accept}" />
+        </BoxContainer>
+    </BoxContainer>
+</DefaultWindow>

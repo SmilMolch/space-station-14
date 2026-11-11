@@ -14,6 +14,14 @@ public sealed partial class ExperienceSystem : EntitySystem
         SubscribeAddComponentToInit<AdminForcedExperienceAddComponent>(SkillForceSetOnSkillTreeAdded, KnowledgeForceSetOnKnowledgeInitialResolve, ForceSetAdditionOnSublevelAdditionPointInitialResolve);
         SubscribeAddComponentToInit<RoleExperienceAddComponent>(SkillAddOnSkillTreeAdded, KnowledgeAddOnKnowledgeInitialResolve, AdditionOnSublevelAdditionPointInitialResolve);
 
+        // SS220-removeantag-begin: independently stack every active antagonist source.
+        SubscribeLocalEvent<IndependentKnowledgeSourceComponent, KnowledgeInitialResolve>(OnIndependentKnowledgeResolve);
+        SubscribeLocalEvent<AntagRoleKnowledgeSourcesComponent, KnowledgeInitialResolve>(AddRoleKnowledge);
+        SubscribeLocalEvent<AntagExperienceSourcesComponent, SkillTreeAdded>(SkillAddFromAntagSources);
+        SubscribeLocalEvent<AntagExperienceSourcesComponent, KnowledgeInitialResolve>(KnowledgeAddFromAntagSources);
+        SubscribeLocalEvent<AntagExperienceSourcesComponent, SublevelAdditionPointInitialResolve>(PointsAddFromAntagSources);
+        // SS220-removeantag-end
+
         SubscribeSublevelAddComponentToInit<JobBackgroundSublevelAddComponent>(SublevelAddOnSkillTreeAdded, SublevelAddOnSublevelAdditionPointInitialResolve);
     }
 
@@ -83,11 +91,33 @@ public sealed partial class ExperienceSystem : EntitySystem
         entity.Comp.ConstantKnowledge.Clear();
         entity.Comp.ResolvedKnowledge.Clear();
 
-        foreach (var knowledge in ev.Knowledges)
+        _knowledgeRebuildDepth++;
+        try
         {
-            if (!TryAddKnowledge(entity!, knowledge))
-                Log.Error($"Cant add knowledge {knowledge} to {ToPrettyString(entity)}");
+            foreach (var knowledge in ev.Knowledges)
+            {
+                if (!TryAddKnowledge(entity!, knowledge))
+                    Log.Error($"Cant add knowledge {knowledge} to {ToPrettyString(entity)}");
+            }
         }
+        finally
+        {
+            _knowledgeRebuildDepth--;
+        }
+
+        // SS220-removeantag-fix04-begin
+        // Recalculation can REDUCE the free-point balance or remove the LAST
+        // knowledge. In those cases no TryAddKnowledge call will dirty the
+        // emptied sets, and merely assigning FreeSublevelPoints is not enough
+        // to replicate the new value to clients. Force the authoritative
+        // recalculated state to be networked, including zero/empty states.
+        DirtyFields(entity.AsNullable(), null,
+        [
+            nameof(ExperienceComponent.FreeSublevelPoints),
+            nameof(ExperienceComponent.ConstantKnowledge),
+            nameof(ExperienceComponent.ResolvedKnowledge)
+        ]);
+        // SS220-removeantag-fix04-end
     }
 
     #region Skill
