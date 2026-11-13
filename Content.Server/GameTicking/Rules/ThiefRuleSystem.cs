@@ -1,8 +1,11 @@
 using Content.Server.Antag;
+using Content.Server.SS220.AntagRemoval;
 using Content.Server.GameTicking.Rules.Components;
 using Content.Server.Roles;
 using Content.Shared.Humanoid;
 using Content.Shared.Roles.Components;
+using Content.Shared.SS220.Experience;
+using Content.Shared.SS220.Experience.Systems;
 
 namespace Content.Server.GameTicking.Rules;
 
@@ -23,6 +26,18 @@ public sealed class ThiefRuleSystem : GameRuleSystem<ThiefRuleComponent>
     private void AfterAntagSelected(Entity<ThiefRuleComponent> mindId, ref AfterAntagEntitySelectedEvent args)
     {
         var ent = args.EntityUid;
+
+        // SS220-removeantag begin
+        // The game rule defines ThiefKnowledge; associate it with this MindRole.
+        if (HasComp<ExperienceComponent>(ent) &&
+            TryComp<AntagAddKnowledgeComponent>(ent, out var knowledge))
+        {
+            var experience = EntityManager.System<ExperienceSystem>();
+            foreach (var id in knowledge.KnowledgesToAdd)
+                experience.GrantAntagKnowledge(ent, RemoveAntagRoles.Thief, id);
+        }
+        // SS220-removeantag end
+
         _antag.SendBriefing(ent, MakeBriefing(ent), null, null);
     }
 

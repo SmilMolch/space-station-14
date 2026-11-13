@@ -14,6 +14,13 @@ public sealed partial class ExperienceSystem : EntitySystem
         SubscribeAddComponentToInit<AdminForcedExperienceAddComponent>(SkillForceSetOnSkillTreeAdded, KnowledgeForceSetOnKnowledgeInitialResolve, ForceSetAdditionOnSublevelAdditionPointInitialResolve);
         SubscribeAddComponentToInit<RoleExperienceAddComponent>(SkillAddOnSkillTreeAdded, KnowledgeAddOnKnowledgeInitialResolve, AdditionOnSublevelAdditionPointInitialResolve);
 
+        // SS220-removeantag-begin: independently stack every active antagonist source.
+        SubscribeLocalEvent<IndependentKnowledgeSourceComponent, KnowledgeInitialResolve>(OnIndependentKnowledgeResolve);
+        SubscribeLocalEvent<AntagExperienceSourcesComponent, SkillTreeAdded>(SkillAddFromAntagSources);
+        SubscribeLocalEvent<AntagExperienceSourcesComponent, KnowledgeInitialResolve>(KnowledgeAddFromAntagSources);
+        SubscribeLocalEvent<AntagExperienceSourcesComponent, SublevelAdditionPointInitialResolve>(PointsAddFromAntagSources);
+        // SS220-removeantag-end
+
         SubscribeSublevelAddComponentToInit<JobBackgroundSublevelAddComponent>(SublevelAddOnSkillTreeAdded, SublevelAddOnSublevelAdditionPointInitialResolve);
     }
 
@@ -83,11 +90,28 @@ public sealed partial class ExperienceSystem : EntitySystem
         entity.Comp.ConstantKnowledge.Clear();
         entity.Comp.ResolvedKnowledge.Clear();
 
-        foreach (var knowledge in ev.Knowledges)
+        _knowledgeRebuildDepth++;
+        try
         {
-            if (!TryAddKnowledge(entity!, knowledge))
-                Log.Error($"Cant add knowledge {knowledge} to {ToPrettyString(entity)}");
+            foreach (var knowledge in ev.Knowledges)
+            {
+                if (!TryAddKnowledge(entity!, knowledge))
+                    Log.Error($"Cant add knowledge {knowledge} to {ToPrettyString(entity)}");
+            }
         }
+        finally
+        {
+            _knowledgeRebuildDepth--;
+        }
+
+        // Synchronize reductions and empty sets as well as additions.
+        DirtyFields(entity.AsNullable(), null,
+        [
+            nameof(ExperienceComponent.FreeSublevelPoints),
+            nameof(ExperienceComponent.ConstantKnowledge),
+            nameof(ExperienceComponent.ResolvedKnowledge)
+        ]);
+
     }
 
     #region Skill
