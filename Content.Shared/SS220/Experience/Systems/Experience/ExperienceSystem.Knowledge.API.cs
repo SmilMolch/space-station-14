@@ -7,6 +7,15 @@ namespace Content.Shared.SS220.Experience.Systems;
 
 public sealed partial class ExperienceSystem : EntitySystem
 {
+    // Only baseline reconstruction suppresses recording individual grants.
+    private int _knowledgeRebuildDepth;
+
+    private void OnIndependentKnowledgeResolve(Entity<IndependentKnowledgeSourceComponent> entity, ref KnowledgeInitialResolve args)
+    {
+        if (!args.DenyChanges)
+            args.Knowledges.UnionWith(entity.Comp.Knowledges);
+    }
+
     public bool TryAddKnowledge(Entity<ExperienceComponent?> entity, [ForbidLiteral] ProtoId<KnowledgePrototype> knowledge)
     {
         if (!Resolve(entity.Owner, ref entity.Comp, false))
@@ -15,6 +24,8 @@ public sealed partial class ExperienceSystem : EntitySystem
         if (!_prototype.Resolve(knowledge, out var knowledgePrototype))
             return false;
 
+        if (_knowledgeRebuildDepth == 0)
+            EnsureComp<IndependentKnowledgeSourceComponent>(entity).Knowledges.Add(knowledge);
         entity.Comp.ConstantKnowledge.Add(knowledge);
         entity.Comp.ResolvedKnowledge.Add(knowledge);
 
@@ -42,6 +53,8 @@ public sealed partial class ExperienceSystem : EntitySystem
         if (!_prototype.Resolve(knowledge, out var knowledgePrototype))
             return false;
 
+        if (TryComp<IndependentKnowledgeSourceComponent>(entity, out var independent))
+            independent.Knowledges.Remove(knowledge);
         entity.Comp.ConstantKnowledge.Remove(knowledge);
         entity.Comp.ResolvedKnowledge.Clear();
 
@@ -50,6 +63,9 @@ public sealed partial class ExperienceSystem : EntitySystem
             if (!_prototype.Resolve(constantKnowledge, out var constantKnowledgePrototype))
                 continue;
 
+            // SS220-removeantag: the base knowledge itself must survive removal
+            // of another knowledge; previously only dependent knowledge was rebuilt.
+            entity.Comp.ResolvedKnowledge.Add(constantKnowledge);
             foreach (var additionKnowledge in constantKnowledgePrototype.AdditionalKnowledges)
             {
                 entity.Comp.ResolvedKnowledge.Add(additionKnowledge);

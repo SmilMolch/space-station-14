@@ -37,6 +37,8 @@ using Robust.Shared.Random;
 using Robust.Shared.Utility;
 using Content.Server.SS220.MindSlave;
 using Content.Shared.SS220.Experience;
+using Content.Server.SS220.AntagRemoval;
+using Content.Shared.SS220.Experience.Systems; //SS220-removeantag
 
 namespace Content.Server.Antag;
 
@@ -59,6 +61,7 @@ public sealed partial class AntagSelectionSystem : GameRuleSystem<AntagSelection
     [Dependency] private readonly MindSlaveSystem _mindSlave = default!; // SS220 MindSlave
     [Dependency] private readonly ArrivalsSystem _arrivals = default!;
     [Dependency] private readonly IPrototypeManager _prototype = default!; //SS220-experience-update
+    [Dependency] private ExperienceSystem _experience = default!; //SS220-removeantag
 
     // arbitrary random number to give late joining some mild interest.
     public const float LateJoinRandomChance = 0.5f;
@@ -200,17 +203,25 @@ public sealed partial class AntagSelectionSystem : GameRuleSystem<AntagSelection
             if (!RobustRandom.Prob(LateJoinRandomChance))
                 continue;
 
+            // SS220-removeantag-begin
+            var players = _playerManager.NetworkedSessions.Count(x => x.AttachedEntity != null);
+            if (TryGetFreedDefinition((uid, antag), players, out var freedDef))
+            {
+                if (freedDef is not { } selectedDef)
+                    continue;
+
+                if (TryMakeAntag((uid, antag), session, selectedDef))
+                    break;
+                continue;
+            }
+            // SS220-removeantag-end
+
             if (!antag.Definitions.Any(p => p.LateJoinAdditional))
                 continue;
 
             DebugTools.AssertNotEqual(antag.SelectionTime, AntagSelectionTime.PrePlayerSpawn);
-
-            // do not count players in the lobby for the antag ratio
-            var players = _playerManager.NetworkedSessions.Count(x => x.AttachedEntity != null);
-
             if (!TryGetNextAvailableDefinition((uid, antag), out var def, players))
                 continue;
-
             if (TryMakeAntag((uid, antag), session, def.Value))
                 break;
         }
@@ -470,50 +481,71 @@ public sealed partial class AntagSelectionSystem : GameRuleSystem<AntagSelection
             return;
         }
 
-        // The following is where we apply components, equipment, and other changes to our antagonist entity.
-        EntityManager.AddComponents(player, def.Components);
+        // SS220-removeantag-begin: capture per-role objective/gear provenance BEFORE granting.
+        var removeAntag = EntityManager.System<RemoveAntagSystem>();
+        var removalSnapshot = removeAntag.BeginGrant(ent.Owner, player, def);
+        // SS220-removeantag-end
 
-        // Equip the entity's RoleLoadout and LoadoutGroup
-        List<ProtoId<StartingGearPrototype>> gear = new();
-        if (def.StartingGear is not null)
-            gear.Add(def.StartingGear.Value);
-
-        // SS220-experience-update-begin
-        if (def.StartingGear is not null && _prototype.Resolve(def.StartingGear, out var gearPrototype))
+        // SS220-removeantag-scope-begin
+        try
         {
-            var skillRoleAddComp = EnsureComp<RoleExperienceAddComponent>(antagEnt.Value);
-            skillRoleAddComp.DefinitionId ??= gearPrototype.ExperienceDefinition;
+            // The following is where we apply components, equipment, and other changes to our antagonist entity.
+            EntityManager.AddComponents(player, def.Components);
 
-            var recalculateEv = new RecalculateEntityExperience();
-            RaiseLocalEvent(antagEnt.Value, ref recalculateEv);
-        }
-        // SS220-experience-update-end
+            // Equip the entity's RoleLoadout and LoadoutGroup
+            List<ProtoId<StartingGearPrototype>> gear = new();
+            if (def.StartingGear is not null)
+                gear.Add(def.StartingGear.Value);
 
-        _loadout.Equip(player, gear, def.RoleLoadout);
-
-        if (session != null)
-        {
-            var curMind = session.GetMind();
-
-            if (curMind == null ||
-                !TryComp<MindComponent>(curMind.Value, out var mindComp) ||
-                mindComp.OwnedEntity != antagEnt)
+            // SS220-experience-update-begin
+            // SS220-removeantag-begin
+            if (def.StartingGear is not null &&
+                _prototype.Resolve(def.StartingGear, out var gearPrototype) &&
+                gearPrototype.ExperienceDefinition is { } expDefinition)
             {
-                curMind = _mind.CreateMind(session.UserId, Name(antagEnt.Value));
-                _mind.SetUserId(curMind.Value, session.UserId);
+                var sources = EnsureComp<AntagExperienceSourcesComponent>(player);
+                foreach (var grantedRole in def.MindRoles ?? new())
+                    sources.Definitions[grantedRole.Id] = expDefinition;
+                Dirty(player, sources);
+                _experience.RecalculateFromSources(player);
+            }
+            // SS220-removeantag-end
+            // SS220-experience-update-end
+
+            _loadout.Equip(player, gear, def.RoleLoadout);
+
+            if (session != null)
+            {
+                var curMind = session.GetMind();
+
+                if (curMind == null ||
+                    !TryComp<MindComponent>(curMind.Value, out var mindComp) ||
+                    mindComp.OwnedEntity != antagEnt)
+                {
+                    curMind = _mind.CreateMind(session.UserId, Name(antagEnt.Value));
+                    _mind.SetUserId(curMind.Value, session.UserId);
+                }
+
+                _mind.TransferTo(curMind.Value, antagEnt, ghostCheckOverride: true);
+                _role.MindAddRoles(curMind.Value, def.MindRoles, null, true);
+                ent.Comp.AssignedMinds.Add((curMind.Value, Name(player)));
+                SendBriefing(session, def.Briefing);
+
+                Log.Debug($"Assigned {ToPrettyString(curMind)} as antagonist: {ToPrettyString(ent)}");
+                _adminLogger.Add(LogType.AntagSelection, $"Assigned {ToPrettyString(curMind)} as antagonist: {ToPrettyString(ent)}");
             }
 
-            _mind.TransferTo(curMind.Value, antagEnt, ghostCheckOverride: true);
-            _role.MindAddRoles(curMind.Value, def.MindRoles, null, true);
-            ent.Comp.AssignedMinds.Add((curMind.Value, Name(player)));
-            SendBriefing(session, def.Briefing);
-
-            Log.Debug($"Assigned {ToPrettyString(curMind)} as antagonist: {ToPrettyString(ent)}");
-            _adminLogger.Add(LogType.AntagSelection, $"Assigned {ToPrettyString(curMind)} as antagonist: {ToPrettyString(ent)}");
+            var afterEv = new AfterAntagEntitySelectedEvent(session, player, ent, def);
+            RaiseLocalEvent(ent, ref afterEv, true);
+            // SS220-removeantag-begin
+            removeAntag.EndGrant(player, removalSnapshot);
+            // SS220-removeantag-end
         }
-
-        var afterEv = new AfterAntagEntitySelectedEvent(session, player, ent, def);
-        RaiseLocalEvent(ent, ref afterEv, true);
+        finally
+        {
+            removeAntag.CancelGrant(removalSnapshot);
+        }
+        // SS220-removeantag-scope-end
     }
 
     /// <summary>
@@ -561,6 +593,11 @@ public sealed partial class AntagSelectionSystem : GameRuleSystem<AntagSelection
 
         if (ent.Comp.AssignedSessions.Contains(session))
             return false;
+
+        // SS220-removeantag-begin: do not select a role removed by an admin in this round.
+        if (IsRoleRevokedForRound(session, def))
+            return false;
+        // SS220-removeantag-end
 
         // SS220 Antag ban fix begin
         if (_ban.GetAntagBans(session.UserId) is { } antagBans)
