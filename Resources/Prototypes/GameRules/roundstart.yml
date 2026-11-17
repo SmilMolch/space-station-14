@@ -256,7 +256,6 @@
       playerRatio: 10
       blacklist:
         components:
-        - ArenaParticipant #SS220 prevent arena participants from getting antag roles
         - AntagImmune
       lateJoinAdditional: true # ss220 traitor latejoin back
       mindRoles:
@@ -265,7 +264,7 @@
       components:
       - type: TryAddExperienceAddition
         sources:
-          Antag:
+          AntagTraitor: # SS220-removeantag
             freeSublevelPoints: 10
             knowledges:
             - SyndicateAgentKnowledge
@@ -373,7 +372,7 @@
       # SS220-experience-update-begin
       - type: TryAddExperienceAddition
         sources:
-          Antag:
+          AntagHeadRevolutionary: # SS220-removeantag
             freeSublevelPoints: 10
             knowledges: []
       # SS220-experience-update-end
